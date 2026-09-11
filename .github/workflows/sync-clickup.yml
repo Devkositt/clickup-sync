@@ -1,0 +1,57 @@
+name: Sync ClickUp Tasks
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # ၁၅ မိနစ်တစ်ခါ Auto Run မည်
+  workflow_dispatch: # Manual တန်း Run လို့လည်း ရသည်
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch ClickUp & Update Gist
+        env:
+          CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          TEAM_ID: "9018849685"
+          TAG: "v1.5.0"
+        run: |
+          node -e '
+          async function run() {
+            const tag = process.env.TAG;
+            const teamId = process.env.TEAM_ID;
+            const clickupUrl = `https://api.clickup.com/api/v2/team/${teamId}/task?tags[]=${encodeURIComponent(tag)}&include_closed=false`;
+
+            const res = await fetch(clickupUrl, {
+              headers: { "Authorization": process.env.CLICKUP_TOKEN }
+            });
+            const data = await res.json();
+            const tasks = data.tasks || [];
+
+            const processed = tasks
+              .filter(t => (t.status?.status || "").toUpperCase() !== "IN RELEASE")
+              .map(t => ({
+                id: t.id,
+                name: t.name,
+                status: t.status?.status || null,
+                due_date: t.due_date ? new Date(parseInt(t.due_date)).toISOString() : null,
+                assignees: (t.assignees || []).map(a => a.username),
+                url: t.url || `https://app.clickup.com/t/${t.id}`
+              }));
+
+            await fetch(`https://api.github.com/gists/${process.env.GIST_ID}`, {
+              method: "PATCH",
+              headers: {
+                "Authorization": `token ${process.env.GIST_TOKEN}`,
+                "Content-Type": "application/json",
+                "User-Agent": "NodeJS"
+              },
+              body: JSON.stringify({
+                files: { "tasks.json": { content: JSON.stringify(processed, null, 2) } }
+              })
+            });
+            console.log("Gist successfully updated!");
+          }
+          run().catch(err => { console.error(err); process.exit(1); });
+          '
